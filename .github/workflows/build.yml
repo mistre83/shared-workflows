@@ -4,9 +4,10 @@ on:
   workflow_call:
     inputs:
       branch:
-        required: true
+        required: false
         type: string
-        description: 'Branch to build (feature branch or main)'
+        default: ''
+        description: 'Feature branch to build. Empty = push to main (semantic versioning path).'
     outputs:
       image_tag:
         description: 'Built image tag'
@@ -19,7 +20,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     outputs:
       image_tag: ${{ steps.tag.outputs.RELEASE_TAG }}
       branch: ${{ steps.tag.outputs.BRANCH }}
@@ -28,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch != '' && inputs.branch || github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure AWS credentials
@@ -41,11 +42,39 @@ jobs:
       - name: Calculate tag
         id: tag
         run: |
-          BRANCH="${{ inputs.branch }}"
           SOURCE_SHA=$(git rev-parse HEAD)
 
-          # Normalize branch name to a valid image tag
-          RELEASE_TAG=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
+          if [ -z "${{ inputs.branch }}" ]; then
+            # Push to main: calculate semantic version tag
+            BRANCH="main"
+            COMMIT_MSG=$(git log -1 --format="%s")
+
+            LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            [ -z "$LATEST_TAG" ] && LATEST_TAG="v0.0.0"
+
+            MAJOR=$(echo $LATEST_TAG | cut -d. -f1 | tr -d 'v')
+            MINOR=$(echo $LATEST_TAG | cut -d. -f2)
+            PATCH=$(echo $LATEST_TAG | cut -d. -f3)
+
+            if echo "$COMMIT_MSG" | grep -qE '^feat!:|BREAKING CHANGE'; then
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+            elif echo "$COMMIT_MSG" | grep -qE '^feat:'; then
+              MINOR=$((MINOR + 1)); PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+
+            RELEASE_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag $RELEASE_TAG
+            git push origin $RELEASE_TAG
+          else
+            # Feature branch: use normalized branch name as tag
+            BRANCH="${{ inputs.branch }}"
+            RELEASE_TAG=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
+          fi
 
           echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_OUTPUT
           echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
