@@ -7,7 +7,7 @@ on:
         required: false
         type: string
         default: ''
-        description: 'Feature branch to build. Empty = push to main (semantic versioning path).'
+        description: 'Feature branch to build. Empty = push to main (SHA tag path).'
     outputs:
       image_tag:
         description: 'Built image tag'
@@ -19,8 +19,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
       image_tag: ${{ steps.tag.outputs.RELEASE_TAG }}
       branch: ${{ steps.tag.outputs.BRANCH }}
@@ -45,27 +43,9 @@ jobs:
           SOURCE_SHA=$(git rev-parse HEAD)
 
           if [ -z "${{ inputs.branch }}" ]; then
-            # Push to main: calculate semantic version tag
+            # Push to main: tag with short SHA. Release Please creates the semver tag on PR merge.
             BRANCH="main"
-            COMMIT_MSG=$(git log -1 --format="%s")
-
-            LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-            [ -z "$LATEST_TAG" ] && LATEST_TAG="v0.0.0"
-
-            MAJOR=$(echo $LATEST_TAG | cut -d. -f1 | tr -d 'v')
-            MINOR=$(echo $LATEST_TAG | cut -d. -f2)
-            PATCH=$(echo $LATEST_TAG | cut -d. -f3)
-
-            if echo "$COMMIT_MSG" | grep -qE '^feat!:|BREAKING CHANGE'; then
-              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-            elif echo "$COMMIT_MSG" | grep -qE '^feat:'; then
-              MINOR=$((MINOR + 1)); PATCH=0
-            else
-              PATCH=$((PATCH + 1))
-            fi
-
-            RELEASE_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-
+            RELEASE_TAG=$(git rev-parse --short HEAD)
           else
             # Feature branch: use normalized branch name as tag
             BRANCH="${{ inputs.branch }}"
@@ -104,10 +84,3 @@ jobs:
             sleep 30
           done
 
-      - name: Push git tag
-        if: inputs.branch == ''
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.tag.outputs.RELEASE_TAG }}
-          git push origin ${{ steps.tag.outputs.RELEASE_TAG }}

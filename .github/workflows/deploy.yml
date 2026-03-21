@@ -9,11 +9,11 @@ on:
       image_tag:
         required: false
         type: string
-        description: 'Image tag to deploy (if empty, reads latest from SSM)'
+        description: 'Image tag to deploy. If empty, uses ECR tag main (latest main build).'
       branch:
         required: false
         type: string
-        description: 'Source branch (if empty, reads from SSM)'
+        description: 'Source branch. If empty, defaults to main.'
 
 jobs:
   deploy:
@@ -31,7 +31,7 @@ jobs:
       - name: Block prod deploys
         if: inputs.environment == 'prod'
         run: |
-          echo "::error::Direct deploy to prod is not allowed. Use: releaser prepare + releaser publish."
+          echo "::error::Direct deploy to prod is not allowed. Merge the Release Please PR to trigger deploy-prod.yml."
           exit 1
 
       - name: Configure AWS credentials
@@ -50,18 +50,9 @@ jobs:
           BRANCH="${{ inputs.branch }}"
 
           if [ -z "$IMAGE_TAG" ]; then
-            ITEM=$(aws dynamodb query \
-              --table-name poc-builds \
-              --index-name service-branch-index \
-              --key-condition-expression "service_branch = :sb" \
-              --expression-attribute-values "{\":sb\":{\"S\":\"${SERVICE}#main\"}}" \
-              --scan-index-forward false \
-              --limit 1 \
-              --query "Items[0]" \
-              --output json)
-
-            IMAGE_TAG=$(echo "$ITEM" | jq -r '.tag.S')
-            BRANCH=$(echo "$ITEM" | jq -r '.branch.S')
+            # No explicit tag: promote the latest main image via the mutable 'main' ECR tag.
+            IMAGE_TAG="main"
+            BRANCH="main"
           fi
 
           echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
