@@ -1,0 +1,101 @@
+name: Deploy to prod (shared)
+
+on:
+  workflow_call:
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.repository.name }} to prod
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      SERVICE: ${{ github.event.repository.name }}
+      ENV: prod
+      AWS_REGION: eu-south-1
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-south-1
+
+      - name: Register new task definition
+        id: taskdef
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          # Deploy the ECR 'main' tag — set by the last real build before this release.
+          ECR_IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/poc-${SERVICE}:main"
+
+          aws ecs describe-task-definition \
+            --task-definition "poc-${ENV}-${SERVICE}" \
+            --query "taskDefinition" \
+            --output json | \
+          jq --arg image "$ECR_IMAGE" --arg container "$SERVICE" \
+            'del(.taskDefinitionArn, .revision, .status, .registeredAt, .registeredBy, .compatibilities, .requiresAttributes)
+             | .containerDefinitions |= map(if .name == $container then .image = $image else . end)' \
+            > /tmp/task-def.json
+
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/task-def.json \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
+          echo "task_definition_arn=$NEW_ARN" >> $GITHUB_OUTPUT
+          echo "New task definition: $NEW_ARN"
+
+      - name: Update ECS service and wait for stability
+        run: |
+          set -euo pipefail
+
+          CLUSTER="poc-${ENV}-${SERVICE}-cluster"
+          ECS_SERVICE="poc-${ENV}-${SERVICE}"
+
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ steps.taskdef.outputs.task_definition_arn }}" \
+            --force-new-deployment \
+            --output text > /dev/null
+
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$ECS_SERVICE"
+
+          echo "Service stable."
+
+      - name: Record deployment
+        run: |
+          set -euo pipefail
+
+          DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          RELEASE_TAG="${{ github.ref_name }}"
+
+          aws dynamodb put-item \
+            --table-name poc-deployments \
+            --item "{
+              \"env_service\": {\"S\": \"${ENV}#${SERVICE}\"},
+              \"deployed_at\": {\"S\": \"$DEPLOYED_AT\"},
+              \"service\":     {\"S\": \"$SERVICE\"},
+              \"env\":         {\"S\": \"$ENV\"},
+              \"tag\":         {\"S\": \"$RELEASE_TAG\"},
+              \"branch\":      {\"S\": \"main\"},
+              \"deployed_by\": {\"S\": \"release-please\"}
+            }" || echo "Warning: failed to record deployment in DynamoDB (non-blocking)"
+
+      - name: Summary
+        run: |
+          RELEASE_TAG="${{ github.ref_name }}"
+          echo "### Deployed $SERVICE to prod" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Release** | \`$RELEASE_TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`$ENV\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered by** | Release Please |" >> $GITHUB_STEP_SUMMARY
