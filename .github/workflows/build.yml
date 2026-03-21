@@ -66,10 +66,6 @@ jobs:
 
             RELEASE_TAG="v${MAJOR}.${MINOR}.${PATCH}"
 
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag $RELEASE_TAG
-            git push origin $RELEASE_TAG
           else
             # Feature branch: use normalized branch name as tag
             BRANCH="${{ inputs.branch }}"
@@ -107,3 +103,11 @@ jobs:
             fi
             sleep 30
           done
+
+      - name: Push git tag
+        if: inputs.branch == ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.tag.outputs.RELEASE_TAG }}
+          git push origin ${{ steps.tag.outputs.RELEASE_TAG }}
