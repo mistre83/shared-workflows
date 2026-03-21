@@ -1,0 +1,80 @@
+name: Build (shared)
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+        description: 'Branch to build (feature branch or main)'
+    outputs:
+      image_tag:
+        description: 'Built image tag'
+        value: ${{ jobs.build.outputs.image_tag }}
+      branch:
+        description: 'Source branch'
+        value: ${{ jobs.build.outputs.branch }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image_tag: ${{ steps.tag.outputs.RELEASE_TAG }}
+      branch: ${{ steps.tag.outputs.BRANCH }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-south-1
+
+      - name: Calculate tag
+        id: tag
+        run: |
+          BRANCH="${{ inputs.branch }}"
+          SOURCE_SHA=$(git rev-parse HEAD)
+
+          # Normalize branch name to a valid image tag
+          RELEASE_TAG=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')
+
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "BRANCH=$BRANCH" >> $GITHUB_OUTPUT
+          echo "SOURCE_SHA=$SOURCE_SHA" >> $GITHUB_OUTPUT
+
+      - name: Trigger CodeBuild and wait
+        run: |
+          SERVICE="${{ github.event.repository.name }}"
+
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "poc-test-${SERVICE}-build" \
+            --source-version "${{ steps.tag.outputs.SOURCE_SHA }}" \
+            --environment-variables-override \
+              name=BRANCH,value="${{ steps.tag.outputs.BRANCH }}",type=PLAINTEXT \
+              name=RELEASE_TAG,value="${{ steps.tag.outputs.RELEASE_TAG }}",type=PLAINTEXT \
+            --region eu-south-1 \
+            --query "build.id" --output text)
+
+          echo "CodeBuild started: $BUILD_ID"
+
+          while true; do
+            STATUS=$(aws codebuild batch-get-builds --ids "$BUILD_ID" \
+              --query "builds[0].buildStatus" --output text)
+            echo "Status: $STATUS"
+            [ "$STATUS" = "SUCCEEDED" ] && break
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "FAULT" ] || \
+               [ "$STATUS" = "TIMED_OUT" ] || [ "$STATUS" = "STOPPED" ]; then
+              echo "::error::CodeBuild failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 30
+          done

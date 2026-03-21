@@ -1,0 +1,34 @@
+name: Build and Deploy (shared)
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+        description: 'Branch to build and deploy'
+      environment:
+        required: true
+        type: string
+        description: 'Target environment'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ inputs.branch }})
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ inputs.branch }}
+    secrets: inherit
+
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    needs: build
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      branch: ${{ needs.build.outputs.branch }}
+    secrets: inherit
