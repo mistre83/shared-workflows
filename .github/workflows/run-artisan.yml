@@ -13,9 +13,26 @@ on:
         description: 'Artisan command to run (e.g. migrate, cache:clear)'
 
 jobs:
+  preview:
+    name: "Preview"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show command summary
+        run: |
+          echo "## Waiting for approval" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Service** | \`${{ github.event.repository.name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Command** | \`php artisan ${{ inputs.command }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
   run:
     name: "php artisan ${{ inputs.command }} on ${{ inputs.environment }}"
+    needs: preview
     runs-on: ubuntu-latest
+    environment: artisan-confirm
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -80,6 +97,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Service** | \`${{ github.event.repository.name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Environment** | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Command** | \`php artisan ${{ inputs.command }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
