@@ -1,0 +1,71 @@
+name: PR Checks (shared)
+
+on:
+  workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+jobs:
+  pint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --quiet
+      - name: Run Pint
+        run: ./vendor/bin/pint --test
+
+  phpstan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --quiet
+      - name: Run PHPStan
+        run: ./vendor/bin/phpstan analyse --no-progress
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: pcov
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --quiet
+      - name: Prepare environment
+        run: cp .env.example .env && php artisan key:generate --ansi
+      - name: Run tests with coverage
+        run: ./vendor/bin/pest --coverage-clover=coverage.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 1
+
+  sonar:
+    needs: [pint, phpstan, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      # coverage.xml is downloaded to the workspace root by download-artifact,
+      # which matches sonar.php.coverage.reportPaths=coverage.xml (relative to repo root).
+      - uses: sonarsource/sonarcloud-github-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
