@@ -1,0 +1,85 @@
+name: Run Artisan Command (shared)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: 'Target environment (test or prod)'
+      command:
+        required: true
+        type: string
+        description: 'Artisan command to run (e.g. migrate, cache:clear)'
+
+jobs:
+  run:
+    name: "php artisan ${{ inputs.command }} on ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-south-1
+
+      - name: Run artisan command via ECS RunTask
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ github.event.repository.name }}"
+          ENV="${{ inputs.environment }}"
+          CLUSTER="poc-${ENV}-${SERVICE}-cluster"
+          TASK_DEF="poc-${ENV}-${SERVICE}"
+
+          TASK_DEF_ARN=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF" \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+
+          NETWORK_CONFIG=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$TASK_DEF" \
+            --query "services[0].networkConfiguration" \
+            --output json)
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF_ARN" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"${SERVICE}\",\"command\":[\"php\",\"artisan\",\"${{ inputs.command }}\"]}]}" \
+            --query "tasks[0].taskArn" \
+            --output text)
+
+          echo "Task started: $TASK_ARN"
+          echo "Waiting for task to complete..."
+
+          aws ecs wait tasks-stopped \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+
+          echo "Exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Artisan command failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### php artisan ${{ inputs.command }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Command** | \`php artisan ${{ inputs.command }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
