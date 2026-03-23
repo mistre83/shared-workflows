@@ -71,6 +71,10 @@ jobs:
             --output text)
 
           echo "Task started: $TASK_ARN"
+          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
+          echo "CLUSTER=$CLUSTER" >> $GITHUB_ENV
+          echo "SERVICE=$SERVICE" >> $GITHUB_ENV
+          echo "ENV=$ENV" >> $GITHUB_ENV
           echo "Waiting for task to complete..."
 
           aws ecs wait tasks-stopped \
@@ -84,11 +88,32 @@ jobs:
             --output text)
 
           echo "Exit code: $EXIT_CODE"
+          echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
 
           if [ "$EXIT_CODE" != "0" ]; then
             echo "::error::Artisan command failed with exit code $EXIT_CODE"
             exit 1
           fi
+
+      - name: Fetch ECS task logs
+        if: always()
+        run: |
+          TASK_ID=$(basename "$TASK_ARN")
+          LOG_GROUP="/ecs/poc-${ENV}-${SERVICE}"
+          LOG_STREAM="ecs/${SERVICE}/${TASK_ID}"
+
+          echo "Fetching logs from $LOG_GROUP/$LOG_STREAM"
+
+          LOGS=$(aws logs get-log-events \
+            --log-group-name "$LOG_GROUP" \
+            --log-stream-name "$LOG_STREAM" \
+            --no-paginate \
+            --query "events[].message" \
+            --output text 2>/dev/null || echo "(no logs found)")
+
+          echo "TASK_LOGS<<EOF" >> $GITHUB_ENV
+          echo "$LOGS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Summary
         if: always()
@@ -101,3 +126,9 @@ jobs:
           echo "| **Environment** | \`${{ inputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Command** | \`php artisan ${{ inputs.command }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Triggered by** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Exit code** | \`${{ env.EXIT_CODE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.TASK_LOGS }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
