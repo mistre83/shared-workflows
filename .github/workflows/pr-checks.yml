@@ -11,10 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: shivammathur/setup-php@v2
         with:
-          vulnerability-check: true
-          fail-on-severity: high
+          php-version: '8.3'
+          coverage: none
+      - name: Check for known vulnerabilities
+        run: composer audit
 
   commitlint:
     runs-on: ubuntu-latest
