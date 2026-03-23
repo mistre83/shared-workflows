@@ -7,7 +7,18 @@ on:
         required: true
 
 jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.json
+
   pint:
+    needs: [commitlint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +32,7 @@ jobs:
         run: ./vendor/bin/pint --test
 
   phpstan:
+    needs: [commitlint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +46,7 @@ jobs:
         run: ./vendor/bin/phpstan analyse --no-progress
 
   tests:
+    needs: [commitlint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
