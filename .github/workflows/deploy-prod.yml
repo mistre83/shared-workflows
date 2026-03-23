@@ -4,12 +4,52 @@ on:
   workflow_call:
 
 jobs:
+  promote-image:
+    name: Promote image to ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    env:
+      SERVICE: ${{ github.event.repository.name }}
+      AWS_REGION: eu-south-1
+    outputs:
+      ecr_image: ${{ steps.promote.outputs.ecr_image }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-south-1
+
+      - name: Promote main → ${{ github.ref_name }} in ECR
+        id: promote
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="${{ github.ref_name }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "poc-${SERVICE}" \
+            --image-ids imageTag=main \
+            --query "images[0].imageManifest" \
+            --output text)
+
+          aws ecr put-image \
+            --repository-name "poc-${SERVICE}" \
+            --image-tag "$RELEASE_TAG" \
+            --image-manifest "$MANIFEST"
+
+          ECR_IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/poc-${SERVICE}:${RELEASE_TAG}"
+          echo "ecr_image=$ECR_IMAGE" >> $GITHUB_OUTPUT
+          echo "Promoted main → $RELEASE_TAG"
+
   deploy:
-    name: Deploy ${{ github.event.repository.name }} to prod
+    name: Deploy ${{ github.ref_name }} to prod
+    needs: promote-image
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     env:
       SERVICE: ${{ github.event.repository.name }}
       ENV: prod
@@ -23,14 +63,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-south-1
 
-      - name: Register new task definition
+      - name: Register task definition
         id: taskdef
         run: |
           set -euo pipefail
 
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          # Deploy the ECR 'main' tag — set by the last real build before this release.
-          ECR_IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/poc-${SERVICE}:main"
+          ECR_IMAGE="${{ needs.promote-image.outputs.ecr_image }}"
 
           aws ecs describe-task-definition \
             --task-definition "poc-${ENV}-${SERVICE}" \
@@ -47,9 +85,9 @@ jobs:
             --output text)
 
           echo "task_definition_arn=$NEW_ARN" >> $GITHUB_OUTPUT
-          echo "New task definition: $NEW_ARN"
+          echo "Registered task definition: $NEW_ARN"
 
-      - name: Update ECS service and wait for stability
+      - name: Update ECS service
         run: |
           set -euo pipefail
 
@@ -69,25 +107,6 @@ jobs:
             --services "$ECS_SERVICE"
 
           echo "Service stable."
-
-      - name: Record deployment
-        run: |
-          set -euo pipefail
-
-          DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          RELEASE_TAG="${{ github.ref_name }}"
-
-          aws dynamodb put-item \
-            --table-name poc-deployments \
-            --item "{
-              \"env_service\": {\"S\": \"${ENV}#${SERVICE}\"},
-              \"deployed_at\": {\"S\": \"$DEPLOYED_AT\"},
-              \"service\":     {\"S\": \"$SERVICE\"},
-              \"env\":         {\"S\": \"$ENV\"},
-              \"tag\":         {\"S\": \"$RELEASE_TAG\"},
-              \"branch\":      {\"S\": \"main\"},
-              \"deployed_by\": {\"S\": \"release-please\"}
-            }" || echo "Warning: failed to record deployment in DynamoDB (non-blocking)"
 
       - name: Summary
         run: |

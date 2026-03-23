@@ -105,27 +105,6 @@ jobs:
 
           echo "Service stable."
 
-      - name: Record deployment
-        run: |
-          set -euo pipefail
-
-          DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          IMAGE_TAG="${{ steps.resolve.outputs.image_tag }}"
-          BRANCH="${{ steps.resolve.outputs.branch }}"
-
-          aws dynamodb put-item \
-            --table-name poc-deployments \
-            --item "{
-              \"env_service\": {\"S\": \"${ENV}#${SERVICE}\"},
-              \"deployed_at\": {\"S\": \"$DEPLOYED_AT\"},
-              \"service\":     {\"S\": \"$SERVICE\"},
-              \"env\":         {\"S\": \"$ENV\"},
-              \"tag\":         {\"S\": \"$IMAGE_TAG\"},
-              \"branch\":      {\"S\": \"$BRANCH\"},
-              \"deployed_by\": {\"S\": \"${{ github.actor }}\"}
-            }"
-
-
       - name: Summary
         run: |
           IMAGE_TAG="${{ steps.resolve.outputs.image_tag }}"
