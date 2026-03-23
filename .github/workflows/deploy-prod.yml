@@ -7,6 +7,9 @@ jobs:
   promote-image:
     name: Promote image to ${{ github.ref_name }}
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     env:
       SERVICE: ${{ github.event.repository.name }}
       AWS_REGION: eu-south-1
@@ -17,8 +20,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: eu-south-1
 
       - name: Promote main → ${{ github.ref_name }} in ECR
@@ -49,6 +51,7 @@ jobs:
     needs: promote-image
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
     env:
       SERVICE: ${{ github.event.repository.name }}
@@ -59,8 +62,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: eu-south-1
 
       - name: Register task definition
